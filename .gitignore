@@ -1,0 +1,36 @@
+# Python 缓存与构建
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+venv/
+.venv/
+ENV/
+
+# 环境变量与敏感信息
+.env
+*.env
+
+# IDE 配置
+.vscode/
+.idea/
+
+# 操作系统
+.DS_Store
+
+# 本地数据与向量库
+chroma_db/
+*.sqlite3
+*.db
+
+# 日志
+*.log
+logs/
+
+# 其他可能的缓存
+.cache/
