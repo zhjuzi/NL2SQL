@@ -5,8 +5,14 @@ import os
 from typing import Dict, List, Any, Optional
 import json
 import logging
-from database import get_schema_info, get_table_relationships
+from database import (
+    get_schema_info,
+    get_table_relationships,
+    get_schema_info_with_overrides,
+    get_table_relationships_with_overrides,
+)
 from config import VECTOR_DB_CONFIG, LLM_CONFIG
+from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,6 +28,8 @@ class SchemaVectorizer:
         self.model = None
         self.embedding_function = None
         self.schema_cache = {}
+        self._overrides: Optional[Dict[str, Any]] = None
+        self._username: Optional[str] = None
         
     def initialize(self):
         """Initialize the vector database and embedding model"""
@@ -41,37 +49,13 @@ class SchemaVectorizer:
             if not api_key:
                 raise ValueError("OPENAI_API_KEY is required for cloud embeddings")
 
-            oa_client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
-
-            # Create a custom embedding function compatible with Chroma
+            # Use Chroma built-in embedding function for compatibility
             model_name = VECTOR_DB_CONFIG.get('embedding_model', 'text-embedding-v4')
-            dimensions = VECTOR_DB_CONFIG.get('embedding_dimensions', 0) or None
-
-            class CloudEmbeddingFunction:
-                def __init__(self, client: OpenAI, model: str, dimensions: int | None):
-                    self.client = client
-                    self.model = model
-                    self.dimensions = dimensions
-
-                # IMPORTANT: Chroma expects signature __call__(self, input)
-                def __call__(self, input):
-                    if input is None:
-                        return []
-                    # Normalize to list of strings
-                    if isinstance(input, str):
-                        inputs = [input]
-                    elif isinstance(input, (list, tuple)):
-                        inputs = [str(t) for t in input]
-                    else:
-                        inputs = [str(input)]
-
-                    kwargs = {"model": self.model, "input": inputs, "encoding_format": "float"}
-                    if self.dimensions:
-                        kwargs["dimensions"] = self.dimensions
-                    resp = self.client.embeddings.create(**kwargs)
-                    return [item.embedding for item in resp.data]
-
-            self.embedding_function = CloudEmbeddingFunction(oa_client, model_name, dimensions)
+            self.embedding_function = OpenAIEmbeddingFunction(
+                api_key=api_key,
+                api_base=base_url or None,
+                model_name=model_name,
+            )
 
             self.collection = self.client.get_or_create_collection(
                 name=VECTOR_DB_CONFIG['collection_name'],
@@ -88,18 +72,75 @@ class SchemaVectorizer:
             logger.error(f"Failed to initialize SchemaVectorizer: {str(e)}")
             raise
 
+    def initialize_with_user_config(self, user_cfg: Dict[str, Any], username: str):
+        """Initialize the vector DB and embedding model using per-user embedding config.
+
+        user_cfg expects an 'embedding' node containing base_url, model, api_key.
+        """
+        try:
+            # Initialize ChromaDB client (shared persistent store)
+            self.client = chromadb.PersistentClient(
+                path=VECTOR_DB_CONFIG['persist_directory'],
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
+            )
+
+            emb = (user_cfg or {}).get('embedding', {})
+            api_key = emb.get('api_key')
+            base_url = emb.get('base_url') or None
+            model_name = emb.get('model') or VECTOR_DB_CONFIG.get('embedding_model', 'text-embedding-v4')
+            if not api_key:
+                raise ValueError("Per-user embedding config missing 'api_key'")
+            # Use Chroma built-in embedding function for compatibility (per-user)
+            self.embedding_function = OpenAIEmbeddingFunction(
+                api_key=api_key,
+                api_base=base_url or None,
+                model_name=model_name,
+            )
+
+            # Per-user collection name
+            base_collection = VECTOR_DB_CONFIG['collection_name']
+            collection_name = f"{base_collection}__{username}"
+            self.collection = self.client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=self.embedding_function,
+            )
+
+            # Store MySQL overrides for later refresh/search
+            mysql_cfg = (user_cfg or {}).get('mysql', {})
+            self._overrides = {
+                k: mysql_cfg.get(k)
+                for k in ("host", "port", "user", "password", "database", "charset")
+                if mysql_cfg.get(k) is not None
+            }
+            self._username = username
+
+            logger.info(f"SchemaVectorizer initialized successfully (per-user config, collection={collection_name})")
+        except Exception as e:
+            logger.error(f"Failed to initialize SchemaVectorizer with user config: {str(e)}")
+            raise
+
     def refresh_schema(self):
         """Refresh schema information from the database"""
         try:
             logger.info("Refreshing database schema...")
+            logger.info(f"get_schema_info_with_overrides.self: {self}")
             
-            # Get schema information
-            schema_result = get_schema_info()
+            # Get schema information with overrides if present
+            if self._overrides:
+                schema_result = get_schema_info_with_overrides(self._overrides)
+            else:
+                schema_result = get_schema_info()
             if not schema_result["success"]:
                 raise Exception(f"Failed to get schema info: {schema_result['error']}")
             
             # Get table relationships
-            relationships_result = get_table_relationships()
+            if self._overrides:
+                relationships_result = get_table_relationships_with_overrides(self._overrides)
+            else:
+                relationships_result = get_table_relationships()
             relationships = {}
             if relationships_result["success"]:
                 for rel in relationships_result["data"]:
@@ -109,9 +150,10 @@ class SchemaVectorizer:
                     relationships[table].append(rel)
             
             # Clear existing collection and recreate with embedding function
-            self.client.delete_collection(VECTOR_DB_CONFIG['collection_name'])
+            current_name = self.collection.name if self.collection else VECTOR_DB_CONFIG['collection_name']
+            self.client.delete_collection(current_name)
             self.collection = self.client.create_collection(
-                name=VECTOR_DB_CONFIG['collection_name'],
+                name=current_name,
                 embedding_function=self.embedding_function,
             )
             
@@ -136,6 +178,7 @@ class SchemaVectorizer:
                 logger.info(f"Processed table: {table_name}")
             
             # Add to vector database
+            #todo 想办法取最新的documents
             if documents:
                 self.collection.add(
                     documents=documents,

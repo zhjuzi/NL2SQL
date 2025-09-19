@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NL2SQL 前端</title>
+  <style>
+    :root { --bg:#0f172a; --panel:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --primary:#22c55e; --danger:#ef4444; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft Yahei', sans-serif; background: linear-gradient(120deg, #0b1220, #0f172a 50%, #111827); color: var(--text); }
+    header { padding: 16px 20px; background: rgba(17,24,39,.6); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10; display:flex; align-items:center; justify-content:space-between; }
+    header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; color: #f1f5f9; }
+    header .user { font-size: 14px; color: var(--muted); }
+    main { max-width: 960px; margin: 24px auto; padding: 0 16px 40px; }
+    .card { background: rgba(31,41,55,.7); border:1px solid rgba(148,163,184,.12); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.35); overflow: hidden; }
+    .card header { position: static; background: rgba(17,24,39,.85); }
+    .panel { padding: 20px; }
+    .row { display: flex; gap: 16px; }
+    .row > * { flex: 1; }
+    .btn { appearance: none; border:1px solid rgba(148,163,184,.2); padding: 10px 14px; border-radius: 10px; color: #e5e7eb; background: #111827; cursor: pointer; transition: .2s; }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,.25); }
+    .btn.primary { background: linear-gradient(135deg, #16a34a, #22c55e); border: none; color: #052e16; font-weight: 600; }
+    .btn.danger { background: linear-gradient(135deg, #dc2626, #ef4444); border: none; color:#fff; }
+    .muted { color: var(--muted); }
+    .input { width: 100%; padding: 10px 12px; border-radius: 8px; border:1px solid rgba(148,163,184,.2); background:#0b1020; color:#e5e7eb; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    label { font-size: 12px; color: var(--muted); display:block; margin: 10px 0 6px; }
+    .hidden { display: none; }
+    .chat { height: 60vh; overflow: auto; padding: 16px; background: rgba(2,6,23,.45); border-top:1px solid rgba(148,163,184,.12); }
+    .msg { margin: 8px 0; padding: 10px 12px; border-radius: 10px; max-width: 80%; white-space: pre-wrap; word-break: break-word; }
+    .msg.user { background:#1f2a44; margin-left:auto; border:1px solid rgba(148,163,184,.2); }
+    .msg.assistant { background:#102b18; border:1px solid rgba(34,197,94,.25); }
+    .msg.tool { background:#2a2238; border:1px solid rgba(147,51,234,.25); color:#e9d5ff; }
+    .footer { display:flex; gap:10px; padding: 12px; background: rgba(17,24,39,.85); border-top:1px solid rgba(148,163,184,.12); }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border:1px solid rgba(148,163,184,.2); padding: 6px 8px; font-size: 12px; }
+    th { background: #0b1020; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>NL2SQL 智能查询</h1>
+    <div class="user" id="userBadge">未登录</div>
+  </header>
+  <main>
+    <section class="card" id="homeView">
+      <header><h1>欢迎</h1></header>
+      <div class="panel">
+        <p class="muted">请选择登录或注册（注册即配置当前用户的 MySQL 与 OpenAI/Embedding 访问参数）。</p>
+        <div class="row" style="margin-top:8px;">
+          <button class="btn primary" onclick="showLogin()">登录</button>
+          <button class="btn" onclick="showRegister()">注册 / 配置</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card hidden" id="loginView">
+      <header><h1>登录</h1></header>
+      <div class="panel">
+        <label>用户名</label>
+        <input id="loginUsername" class="input" placeholder="输入用户名" />
+        <div class="row" style="margin-top:12px;">
+          <button class="btn primary" onclick="doLogin()">登录</button>
+          <button class="btn" onclick="backHome()">返回</button>
+        </div>
+        <div id="loginMsg" class="muted" style="margin-top:8px;"></div>
+      </div>
+    </section>
+
+    <section class="card hidden" id="registerView">
+      <header><h1>注册 / 配置</h1></header>
+      <div class="panel">
+        <div class="grid">
+          <div>
+            <label>用户名</label>
+            <input id="regUsername" class="input" placeholder="alice" />
+          </div>
+          <div>
+            <label>MySQL Host</label>
+            <input id="mysqlHost" class="input" placeholder="127.0.0.1" />
+          </div>
+          <div>
+            <label>MySQL Port</label>
+            <input id="mysqlPort" type="number" class="input" placeholder="3306" />
+          </div>
+          <div>
+            <label>MySQL User (可选，不填则用默认)</label>
+            <input id="mysqlUser" class="input" placeholder="root 或 nl2sql" />
+          </div>
+          <div>
+            <label>MySQL Password</label>
+            <input id="mysqlPassword" type="password" class="input" placeholder="password" />
+          </div>
+        </div>
+        <h3 style="margin-top:16px;">OpenAI 配置</h3>
+        <div class="grid-3">
+          <div>
+            <label>Base URL</label>
+            <input id="openaiBase" class="input" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div>
+            <label>Model</label>
+            <input id="openaiModel" class="input" placeholder="gpt-4o" />
+          </div>
+          <div>
+            <label>API Key</label>
+            <input id="openaiKey" type="password" class="input" placeholder="sk-..." />
+          </div>
+        </div>
+        <h3 style="margin-top:16px;">Embedding 配置</h3>
+        <div class="grid-3">
+          <div>
+            <label>Base URL</label>
+            <input id="embBase" class="input" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div>
+            <label>Model</label>
+            <input id="embModel" class="input" placeholder="text-embedding-3-large" />
+          </div>
+          <div>
+            <label>API Key</label>
+            <input id="embKey" type="password" class="input" placeholder="sk-..." />
+          </div>
+        </div>
+        <div class="row" style="margin-top:16px;">
+          <button class="btn primary" onclick="doRegister()">保存配置</button>
+          <button class="btn" onclick="backHome()">返回</button>
+        </div>
+        <div id="regMsg" class="muted" style="margin-top:8px;"></div>
+      </div>
+    </section>
+
+    <section class="card hidden" id="chatView">
+      <header>
+        <h1>聊天 / NL2SQL</h1>
+        <div class="muted">已登录用户：<span id="chatUser"></span></div>
+      </header>
+      <div id="chatBox" class="chat"></div>
+      <div class="footer">
+        <input id="chatInput" class="input" placeholder="请输入你的问题，例如：近7天订单数量" onkeydown="if(event.key==='Enter'){sendMsg()}" />
+        <button class="btn primary" onclick="sendMsg()">发送</button>
+        <button class="btn" onclick="refreshSchema()">刷新Schema</button>
+      </div>
+    </section>
+  </main>
+
+<script>
+  const els = id => document.getElementById(id);
+  const views = { home:'homeView', login:'loginView', register:'registerView', chat:'chatView' };
+  let username = localStorage.getItem('nl2sql_username') || '';
+
+  function show(view){
+    Object.values(views).forEach(v=> els(v).classList.add('hidden'));
+    els(view).classList.remove('hidden');
+  }
+  function backHome(){ show(views.home); }
+  function showLogin(){ show(views.login); }
+  function showRegister(){ show(views.register); }
+  function goChat(){
+    els('chatUser').textContent = username;
+    els('userBadge').textContent = username ? `用户：${username}` : '未登录';
+    show(views.chat);
+  }
+
+  async function doLogin(){
+    const u = els('loginUsername').value.trim();
+    if(!u){ els('loginMsg').textContent = '请输入用户名'; return; }
+    const r = await fetch(`/user/config?username=${encodeURIComponent(u)}`);
+    const j = await r.json();
+    if(j.exists){
+      username = u; localStorage.setItem('nl2sql_username', username);
+      els('loginMsg').textContent = '登录成功';
+      goChat();
+    } else {
+      els('loginMsg').textContent = '用户不存在，请先注册';
+    }
+  }
+
+  async function doRegister(){
+    const payload = {
+      username: els('regUsername').value.trim(),
+      mysql_host: els('mysqlHost').value.trim() || '127.0.0.1',
+      mysql_port: parseInt(els('mysqlPort').value || '3306'),
+      mysql_password: els('mysqlPassword').value,
+      mysql_user: (els('mysqlUser').value || '').trim() || null,
+      openai_base_url: els('openaiBase').value.trim(),
+      openai_model: els('openaiModel').value.trim(),
+      openai_api_key: els('openaiKey').value.trim(),
+      embedding_base_url: els('embBase').value.trim(),
+      embedding_model: els('embModel').value.trim(),
+      embedding_api_key: els('embKey').value.trim(),
+    };
+    if(!payload.username){ els('regMsg').textContent = '请填写用户名'; return; }
+    try{
+      const r = await fetch('/user/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      if(!r.ok){ throw new Error(await r.text()); }
+      const j = await r.json();
+      els('regMsg').textContent = `配置${j.action==='updated'?'已更新':'已创建'}，可前往聊天`;
+      username = payload.username; localStorage.setItem('nl2sql_username', username);
+      goChat();
+    }catch(e){
+      els('regMsg').textContent = '保存失败：' + (e?.message || e);
+    }
+  }
+
+  function appendMsg(role, content){
+    const box = els('chatBox');
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+    if(typeof content === 'string'){
+      div.textContent = content;
+    } else {
+      div.textContent = JSON.stringify(content, null, 2);
+    }
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function appendTable(columns, rows){
+    const box = els('chatBox');
+    const wrap = document.createElement('div');
+    wrap.className = 'msg assistant';
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    (columns || []).forEach(c=>{ const th=document.createElement('th'); th.textContent=c; trh.appendChild(th); });
+    thead.appendChild(trh);
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    (rows || []).forEach(r=>{
+      const tr=document.createElement('tr');
+      (columns||Object.keys(r||{})).forEach(c=>{ const td=document.createElement('td'); td.textContent = r?.[c]; tr.appendChild(td); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    box.appendChild(wrap);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function sendMsg(){
+    const q = els('chatInput').value.trim();
+    if(!q){ return; }
+    if(!username){ alert('请先登录或注册'); return; }
+    appendMsg('user', q);
+    els('chatInput').value = '';
+    try{
+      const r = await fetch('/query', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question: q, max_retries: 3, username }) });
+      const j = await r.json();
+      if(j.error){ appendMsg('assistant', `错误：${j.error}`); return; }
+      if(j.assistant_message){ appendMsg('assistant', j.assistant_message); }
+      if((j.columns && j.columns.length) || (j.results && j.results.length)){
+        appendTable(j.columns || [], j.results || []);
+      }
+      if(j.sql_query){ appendMsg('tool', `SQL: ${j.sql_query}`); }
+    }catch(e){
+      appendMsg('assistant', '请求失败：' + (e?.message || e));
+    }
+  }
+
+  async function refreshSchema(){
+    if(!username){ alert('请先登录或注册'); return; }
+    try{
+      const r = await fetch(`/schema/refresh?username=${encodeURIComponent(username)}`);
+      const j = await r.json();
+      if(r.ok){ appendMsg('assistant', 'Schema 已刷新'); }
+      else { appendMsg('assistant', '刷新失败：' + (j?.detail || JSON.stringify(j))); }
+    }catch(e){ appendMsg('assistant', '刷新失败：' + (e?.message || e)); }
+  }
+
+  // 初始视图
+  if(username){ els('userBadge').textContent = `用户：${username}`; goChat(); } else { backHome(); }
+</script>
+</body>
+</html>

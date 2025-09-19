@@ -1,0 +1,19 @@
+{
+  "zxj": {
+    "mysql": {
+      "host": "127.0.0.1",
+      "port": 3307,
+      "password": "password"
+    },
+    "openai": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-max",
+      "api_key": "sk-79bafa20b12240b090eba4c9cd2b5dbb"
+    },
+    "embedding": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "text-embedding-v3",
+      "api_key": "sk-79bafa20b12240b090eba4c9cd2b5dbb"
+    }
+  }
+}

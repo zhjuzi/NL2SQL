@@ -72,6 +72,43 @@ def execute_sql(sql_query: str) -> Dict[str, Any]:
         if connection:
             connection.close()
 
+def _build_connection_kwargs(overrides: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Merge default DB_CONFIG with optional overrides for host, port, user, password, database, charset."""
+    cfg = dict(DB_CONFIG)
+    if overrides:
+        for k in ("host", "port", "user", "password", "database", "charset"):
+            if k in overrides and overrides[k] is not None:
+                cfg[k] = overrides[k]
+    return cfg
+
+def execute_sql_with_overrides(sql_query: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Execute SQL using connection params merged from DB_CONFIG and overrides."""
+    connection = None
+    try:
+        params = _build_connection_kwargs(overrides)
+        connection = pymysql.connect(
+            cursorclass=pymysql.cursors.DictCursor,
+            **params
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(sql_query)
+            result = cursor.fetchall()
+            column_names = [i[0] for i in cursor.description] if cursor.description else []
+            if sql_query.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
+                connection.commit()
+                logger.info(f"Successfully executed: {sql_query}")
+            return {"success": True, "data": result, "columns": column_names, "error": None}
+    except pymysql.MySQLError as e:
+        error_code, error_message = e.args
+        logger.error(f"SQL execution failed! Error code: {error_code}, Error message: {error_message}")
+        return {"success": False, "data": None, "columns": None, "error": f"Error {error_code}: {error_message}"}
+    except Exception as e:
+        logger.error(f"Unexpected error during SQL execution: {str(e)}")
+        return {"success": False, "data": None, "columns": None, "error": f"Unexpected error: {str(e)}"}
+    finally:
+        if connection:
+            connection.close()
+
 def test_connection() -> bool:
     """
     Test database connection
@@ -98,6 +135,7 @@ def get_schema_info() -> Dict[str, Any]:
         tables_result = execute_sql("SHOW TABLES")
         if not tables_result["success"]:
             return tables_result
+        log.info(f"get_schema_info.Tables result: {tables_result}")
         
         schema_info = {}
         tables = [list(row.values())[0] for row in tables_result["data"]]
@@ -129,6 +167,29 @@ def get_schema_info() -> Dict[str, Any]:
             "data": None,
             "error": f"Failed to get schema info: {str(e)}"
         }
+
+def get_schema_info_with_overrides(overrides: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Get schema info using provided DB connection overrides."""
+    try:
+        tables_result = execute_sql_with_overrides("SHOW TABLES", overrides)
+        if not tables_result["success"]:
+            return tables_result
+        schema_info = {}
+        tables = [list(row.values())[0] for row in tables_result["data"]]
+        for table in tables:
+            columns_result = execute_sql_with_overrides(f"DESCRIBE {table}", overrides)
+            if columns_result["success"]:
+                schema_info[table] = {
+                    "columns": columns_result["data"],
+                    "create_statement": None
+                }
+                create_result = execute_sql_with_overrides(f"SHOW CREATE TABLE {table}", overrides)
+                if create_result["success"]:
+                    schema_info[table]["create_statement"] = create_result["data"][0]["Create Table"]
+        return {"success": True, "data": schema_info, "error": None}
+    except Exception as e:
+        logger.error(f"Failed to get schema info (overrides): {str(e)}")
+        return {"success": False, "data": None, "error": f"Failed to get schema info: {str(e)}"}
 
 def get_table_relationships() -> Dict[str, Any]:
     """
@@ -162,3 +223,24 @@ def get_table_relationships() -> Dict[str, Any]:
             "data": None,
             "error": f"Failed to get table relationships: {str(e)}"
         }
+
+def get_table_relationships_with_overrides(overrides: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Get table relationships using provided DB connection overrides."""
+    try:
+        relationships_query = """
+        SELECT 
+            TABLE_NAME,
+            COLUMN_NAME,
+            CONSTRAINT_NAME,
+            REFERENCED_TABLE_NAME,
+            REFERENCED_COLUMN_NAME
+        FROM 
+            information_schema.KEY_COLUMN_USAGE
+        WHERE 
+            TABLE_SCHEMA = DATABASE() 
+            AND REFERENCED_TABLE_NAME IS NOT NULL
+        """
+        return execute_sql_with_overrides(relationships_query, overrides)
+    except Exception as e:
+        logger.error(f"Failed to get table relationships (overrides): {str(e)}")
+        return {"success": False, "data": None, "error": f"Failed to get table relationships: {str(e)}"}
